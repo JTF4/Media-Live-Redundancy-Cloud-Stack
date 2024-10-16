@@ -226,11 +226,9 @@
                             "M3u8Settings": {
                               "AudioFramesPerPes": 4,
                               "PcrControl": "PCR_EVERY_PES_PACKET",
-                              "PmtPid": 480,
-                              "VideoPid": 481,
-                              "AudioPids": [
-                                482
-                              ]
+                              "PmtPid": "480",
+                              "VideoPid": "481",
+                              "AudioPids": "482"
                             }
                           }
                         },
