@@ -1,0 +1,293 @@
+{
+    "Description": "CloudFormation template for a MediaLive channel with redundant RTMP inputs and an HLS output.",
+    "Parameters": {
+      "InputCIDR": {
+        "Description": "Specify the CIDR Block for the MediaLive SecurityGroup.",
+        "Type": "String",
+        "Default": "0.0.0.0/0",
+        "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+        "ConstraintDescription": "Must be a valid IP CIDR range."
+      },
+      "PrimaryStreamName": {
+        "Description": "Primary Input Stream Name.",
+        "Type": "String",
+        "Default": ""
+      },
+      "PrimaryStreamKey": {
+        "Description": "Primary Input Stream Key.",
+        "Type": "String",
+        "Default": ""
+      },
+      "BackupStreamName": {
+        "Description": "Backup Input Stream Name.",
+        "Type": "String",
+        "Default": ""
+      },
+      "BackupStreamKey": {
+        "Description": "Backup Input Stream Key.",
+        "Type": "String",
+        "Default": ""
+      },
+      "RestreamStreamKey": {
+        "Description": "The stream key for Restream.",
+        "Type": "String",
+        "NoEcho": true
+      }
+    },
+    "Resources": {
+      "MediaLiveRole": {
+        "Type": "AWS::IAM::Role",
+        "Properties": {
+          "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "medialive.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          },
+          "Policies": [
+            {
+              "PolicyName": {
+                "Fn::Sub": "${AWS::StackName}-mediatranscode-role"
+              },
+              "PolicyDocument": {
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Action": [
+                      "s3:ListBucket",
+                      "s3:PutObject",
+                      "s3:GetObject",
+                      "s3:DeleteObject"
+                    ],
+                    "Resource": "*"
+                  },
+                  {
+                    "Effect": "Allow",
+                    "Action": [
+                      "logs:CreateLogGroup",
+                      "logs:CreateLogStream",
+                      "logs:PutLogEvents"
+                    ],
+                    "Resource": "arn:aws:logs:*:*:*"
+                  },
+                  {
+                    "Effect": "Allow",
+                    "Action": [
+                      "mediapackage:DescribeChannel"
+                    ],
+                    "Resource": "*"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "MediaLiveInputSecurityGroup": {
+        "Type": "AWS::MediaLive::InputSecurityGroup",
+        "Properties": {
+          "WhitelistRules": [
+            {
+              "Cidr": {
+                "Ref": "InputCIDR"
+              }
+            }
+          ]
+        }
+      },
+      "PrimaryMediaLiveInput": {
+        "Type": "AWS::MediaLive::Input",
+        "Properties": {
+          "Name": "PrimaryInput",
+          "Type": "RTMP_PUSH",
+          "InputSecurityGroups": [
+            {
+              "Ref": "MediaLiveInputSecurityGroup"
+            }
+          ],
+          "Destinations": [
+            {
+              "StreamName": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    {
+                      "Ref": "PrimaryStreamName"
+                    },
+                    {
+                      "Ref": "PrimaryStreamKey"
+                    }
+                  ]
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "BackupMediaLiveInput": {
+        "Type": "AWS::MediaLive::Input",
+        "Properties": {
+          "Name": "BackupInput",
+          "Type": "RTMP_PUSH",
+          "InputSecurityGroups": [
+            {
+              "Ref": "MediaLiveInputSecurityGroup"
+            }
+          ],
+          "Destinations": [
+            {
+              "StreamName": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    {
+                      "Ref": "BackupStreamName"
+                    },
+                    {
+                      "Ref": "BackupStreamKey"
+                    }
+                  ]
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "MediaLiveChannel": {
+        "Type": "AWS::MediaLive::Channel",
+        "Properties": {
+          "ChannelClass": "SINGLE_PIPELINE",
+          "Name": {
+            "Fn::Sub": "${AWS::StackName}-Channel"
+          },
+          "InputAttachments": [
+            {
+              "InputId": {
+                "Ref": "PrimaryMediaLiveInput"
+              },
+              "InputSettings": {
+                "SourceEndBehavior": "CONTINUE",
+                "InputFilter": "AUTO",
+                "FilterStrength": 1,
+                "DeblockFilter": "DISABLED",
+                "DenoiseFilter": "DISABLED",
+                "Smpte2038DataPreference": "IGNORE",
+                "AudioSelectors": [],
+                "CaptionSelectors": []
+              }
+            },
+            {
+              "InputId": {
+                "Ref": "BackupMediaLiveInput"
+              },
+              "InputSettings": {
+                "SourceEndBehavior": "CONTINUE",
+                "InputFilter": "AUTO",
+                "FilterStrength": 1,
+                "DeblockFilter": "DISABLED",
+                "DenoiseFilter": "DISABLED",
+                "Smpte2038DataPreference": "IGNORE",
+                "AudioSelectors": [],
+                "CaptionSelectors": []
+              }
+            }
+          ],
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "MediaLiveRole",
+              "Arn"
+            ]
+          },
+          "EncoderSettings": {
+            "OutputGroups": [
+              {
+                "Name": "HLSGroup",
+                "OutputGroupSettings": {
+                  "HlsGroupSettings": {
+                    "Destination": {
+                      "DestinationRefId": "RestreamHLSOutput"
+                    },
+                    "SegmentLength": 6,
+                    "MinSegmentLength": 2
+                  }
+                },
+                "Outputs": [
+                  {
+                    "OutputSettings": {
+                      "HlsOutputSettings": {
+                        "HlsSettings": {
+                          "StandardHlsSettings": {
+                            "M3u8Settings": {
+                              "AudioFramesPerPes": 4,
+                              "PcrControl": "PCR_EVERY_PES_PACKET",
+                              "PmtPid": 480,
+                              "VideoPid": 481,
+                              "AudioPids": [
+                                482
+                              ]
+                            }
+                          }
+                        },
+                        "NameModifier": "_hls"
+                      }
+                    },
+                    "VideoDescriptionName": "video_1080p",
+                    "AudioDescriptionNames": [
+                      "audio_1"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "TimecodeConfig": {
+              "Source": "EMBEDDED"
+            },
+            "VideoDescriptions": [
+              {
+                "CodecSettings": {
+                  "H264Settings": {
+                    "Bitrate": 5000000,
+                    "FramerateControl": "SPECIFIED",
+                    "FramerateNumerator": 30,
+                    "FramerateDenominator": 1,
+                    "GopSize": 2,
+                    "GopSizeUnits": "SECONDS"
+                  }
+                },
+                "Height": 1080,
+                "Width": 1920,
+                "Name": "video_1080p"
+              }
+            ]
+          },
+          "Destinations": [
+            {
+              "Id": "RestreamHLSOutput",
+              "Settings": [
+                {
+                  "Url": {
+                    "Fn::Sub": "rtmp://live.restream.io/live/${RestreamStreamKey}"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "Outputs": {
+      "MediaLiveChannelConsole": {
+        "Value": {
+          "Fn::Sub": "https://console.aws.amazon.com/medialive/home?region=${AWS::Region}#!/channels:"
+        },
+        "Description": "URL to MediaLive Channel Console"
+      }
+    }
+  }
+  
